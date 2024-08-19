@@ -1,0 +1,545 @@
+---
+title: "Alzheimers project"
+author: "Nkosi Sampson"
+date: "2024-08-19"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, echo=FALSE, include = FALSE}
+#Load relevant packages
+library(NACCdata)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ISLR2)
+library(nnet)
+library(tidyverse)
+library(tidymodels)
+library(lubridate)
+library(rlang) # For .data pronoun
+
+library(probably)
+library(glmnet)
+```
+
+
+
+```{r}
+#reload data again so that its not overwritten
+bio_data <- NACCdata::biomarker_data %>% 
+  mutate(TauAssayDate = make_date(CSFTTYR, CSFTTMO, CSFTTDY))
+
+# Assuming mri_data is already loaded and ImagingVisitDate is correctly created
+bio_data1 <- bio_data %>%
+  arrange(NACCID, TauAssayDate) %>%
+  group_by(NACCID) %>%
+  mutate(TauAssayNum = row_number())  # Assign visit number
+
+
+
+
+# Find the first visit with a valid recorded measurement of CSFVOL and NACCICV
+first_measurement_visit <- bio_data1 %>%
+  group_by(NACCID) %>%
+  summarize(FirstTauAssayVisit = min(TauAssayNum)) %>%
+  ungroup()
+```
+
+
+```{r}
+#create an ImagingVisitDate column
+bio_data2 <- bio_data1 %>% 
+  mutate(TauAssayDate = make_date(CSFTTYR, CSFTTMO, CSFTTDY)) %>%
+  arrange(NACCID, TauAssayDate) %>%
+  group_by(NACCID) %>%
+  mutate(TauAssayNum = row_number()) %>%
+  ungroup() # Remove the grouping
+
+# Now filter for the first visit number and valid measurements
+bio_data3 <- bio_data2 %>%
+  filter(TauAssayNum == 1) 
+```
+
+
+
+```{r}
+#Convert VISITYR, VISITMO, VISITDAY in UDS to a single Data column
+uds <- NACCdata::UDS %>% 
+  mutate(VisitDate = make_date(VISITYR, VISITMO, VISITDAY))
+```
+
+
+```{r}
+#Filter for the first visit per patient in both datasets
+uds_first_visit <- uds %>% 
+  group_by(NACCID) %>% 
+  filter(VisitDate == min(VisitDate)) %>% 
+  ungroup()
+```
+  
+
+```{r}
+#Join the first UDS visit with the first valid MRI visit and Select required columns. 
+#Also omit the from the biomarker data
+df_incomplete <- na.omit(
+  left_join(
+    uds_first_visit, bio_data3, by = "NACCID") %>%  
+    dplyr::select(
+      NACCID,  NACCAGE, BPDIAS, BPSYS, HXHYPER, HYPERCHO, HXSTROKE, CVHATT, CVCHF, CVAFIB, NACCBMI, 
+      DIABETES, B12DEF, DEP2YRS, SMOKYRS, ALCOHOL, NACCNIHR, HISPANIC,
+      EDUC, SEX, MARISTAT, NACCALZD, CSFTTAU, CSFABETA))
+```
+
+
+
+
+
+
+
+```{r}
+#change unknown and not collected data points to NA
+df_incomplete1 <- df_incomplete %>%
+  mutate(across(c(ALCOHOL, HXSTROKE, DEP2YRS, HXHYPER, NACCBMI, BPDIAS, BPSYS, HYPERCHO, CVHATT,
+                CVCHF, CVAFIB, DIABETES, B12DEF, SMOKYRS), ~ na_if(.x, -4))) %>%
+  mutate(across(c(ALCOHOL, DEP2YRS, HYPERCHO, CVHATT, CVCHF, CVAFIB, DIABETES, B12DEF, MARISTAT, 
+                  HISPANIC), ~ na_if(.x, 9))) %>%
+  mutate(across(c(BPDIAS, BPSYS), ~ na_if(.x, 888))) %>%
+  mutate(across(c(EDUC, SMOKYRS, NACCNIHR), ~ na_if(.x, 99))) %>%
+  mutate(NACCBMI = na_if(NACCBMI, 888.8)) %>% 
+  mutate(BPDIAS = na_if(BPDIAS, 777)) %>% 
+  mutate(SMOKYRS = replace(SMOKYRS, SMOKYRS %in% c(88), NA))
+  
+
+#remove NA's from data frame
+df_incomplete2 <- na.omit(df_incomplete1)
+#number of rows in new data frame
+nrow(df_incomplete1)
+```
+
+
+```{r}
+library(dplyr)
+
+df_incomplete3 <- df_incomplete2 %>%
+  mutate(
+    # Recode NACCALZD based on the condition, using integer literals
+    NACCALZD = case_when(
+      NACCALZD == 8 ~ 0L,  # Use 0L to explicitly denote an integer literal
+      TRUE ~ 1L           # Use 1L to explicitly denote an integer literal
+    ),
+    # Change HXSTROKE variable to binary, handling NA values appropriately
+    HXSTROKE = case_when(
+      is.na(HXSTROKE) ~ NA_real_,  # Preserve NA values
+      HXSTROKE == 2 ~ 1,           # Recode '2' as '1'
+      TRUE ~ 0                     # Default to '0'
+    ),
+    # Change SEX variable to 0/1
+    SEX = case_when(
+      SEX == 1 ~ 0,
+      SEX == 2 ~ 1
+    )
+  )
+
+df_incomplete4 <- df_incomplete3[, -1]
+```
+
+```{r}
+df_incomplete5 <- df_incomplete4 %>%
+  mutate(CVHATT = ifelse(CVHATT == "1" | CVHATT == "2", 1, 0), 
+         CVCHF = ifelse(CVCHF == "1" | CVCHF == "2", 1, 0), 
+         CVAFIB = ifelse(CVAFIB == "1" | CVAFIB == "2", 1, 0),
+         DIABETES = ifelse(DIABETES == "1" | DIABETES == "2", 1, 0),
+         B12DEF = ifelse(B12DEF == "1" | B12DEF == "2", 1, 0),
+         ALCOHOL = ifelse(ALCOHOL == "1" | ALCOHOL == "2", 1, 0),
+          HYPERCHO = ifelse(HYPERCHO == "1" | HYPERCHO == "2", 1, 0),
+          MARISTAT = ifelse(MARISTAT == "2" | MARISTAT == "3" | MARISTAT == "4" |
+                              MARISTAT == "5" | MARISTAT == "6", 0, 1))
+
+```
+
+
+```{r}
+#Make categoricals factors
+df_incomplete6 <- df_incomplete5 %>% 
+  mutate(
+         HXHYPER = as.factor(HXHYPER),
+         HXSTROKE = as.factor(HXSTROKE),
+         CVHATT = as.factor(CVHATT),
+         CVCHF = as.factor(CVCHF),
+         CVAFIB = as.factor(CVAFIB),
+         DIABETES = as.factor(DIABETES),
+         B12DEF = as.factor(B12DEF), 
+         DEP2YRS = as.factor(DEP2YRS), 
+         ALCOHOL = as.factor(ALCOHOL),
+         HYPERCHO = as.factor(HYPERCHO), 
+         NACCNIHR = as.factor(NACCNIHR),
+         HISPANIC = as.factor(HISPANIC), 
+         SEX = as.factor(SEX), 
+         MARISTAT = as.factor(MARISTAT),
+         NACCALZD = as.factor(NACCALZD))
+
+```
+
+```{r}
+#order variables so that numerical are first (useful for later)
+df <- dplyr::select(df_incomplete6, CSFTTAU, CSFABETA, NACCAGE, BPDIAS, BPSYS, NACCBMI, SMOKYRS, EDUC,
+                    everything())
+```
+
+
+*For the LASSO model, we first want to check the linearity assumption for continuous variables*
+
+
+```{r}
+# Full model including all predictors
+full_model <- glm(NACCALZD ~ CSFTTAU + CSFABETA + NACCAGE + BPDIAS + BPSYS + HXHYPER + HXSTROKE 
+      + NACCBMI + DEP2YRS + SMOKYRS + HISPANIC + EDUC + SEX + ALCOHOL + HYPERCHO
+      + CVHATT + CVCHF + DIABETES + NACCNIHR + B12DEF + MARISTAT + CVAFIB, 
+                  data = df, family = binomial)
+
+# Variables to be iteratively excluded
+variables_to_exclude <- c("CSFTTAU", "CSFABETA", "NACCAGE", "EDUC", "SMOKYRS", "NACCBMI", "BPDIAS", 
+                          "BPSYS")
+
+# Loop over each variable to exclude
+for (var in variables_to_exclude) {
+  
+  # Create a formula for the reduced model by excluding the current variable
+  reduced_formula <- as.formula(paste("NACCALZD ~", paste(setdiff(variables_to_exclude, var), 
+    collapse = " + "), "+ HXHYPER + HXSTROKE + DEP2YRS + HISPANIC + SEX + ALCOHOL+ HYPERCHO + CVHATT + CVCHF +
+                                      DIABETES + NACCNIHR + B12DEF + MARISTAT + CVAFIB"))
+  
+  # Fit the reduced model
+  reduced_model <- glm(reduced_formula, data = df, family = binomial)
+  
+  # Calculate the linear predictor (log odds) from the reduced model
+  linear_predictor_reduced <- predict(reduced_model, type = "link")
+  
+  # Define the predictor variables (excluding the outcome variable)
+  predictors <- names(coef(reduced_model))
+  
+  # Loop over each predictor to calculate and plot partial residuals, one at a time
+  for (predictor in predictors) {
+    
+    # Skip the intercept
+    if (predictor == "(Intercept)") next
+    
+    print(paste("Processing:", predictor))  # Debugging line
+    
+    # Extract the coefficient for the current predictor from the full model
+    beta_X <- coef(full_model)[predictor]
+    
+    # Extract the values of the predictor of interest
+    X_values <- df[[predictor]]
+    
+    # Ensure the predictor exists in the dataframe
+    if (is.null(X_values)) {
+      print(paste("", predictor, ""))
+      next
+    }
+    
+    # Calculate the partial residuals for the log odds
+    partial_residuals <- linear_predictor_reduced + beta_X * X_values
+    
+    # Plot the partial residuals against the predictor, one plot per page
+    plot(X_values, partial_residuals, 
+         main = paste("Partial Residuals vs", predictor, "(Excluding", var, ")"), 
+         xlab = predictor, 
+         ylab = "Partial Residuals (Log Odds)")
+    
+    # Fit a lowess smoother to check linearity
+    lines(lowess(X_values, partial_residuals), col = "blue")
+    
+    # Add a regression line to visualize the relationship
+    abline(lm(partial_residuals ~ X_values), col = "red")
+    
+    # Pause before showing the next plot (remove or comment out to auto advance)
+    # readline(prompt="Press [Enter] to see the next plot...")
+  }
+}
+
+```
+*Linearity assumptions seems to pass. However, when I originally did this check, I was not aware of my need to check the linearity of the log-odds (logits) of each variable using partial residuals, so I falsely assumed that the linearity assumptions was violated. So, the following code is under the assumption that linearity was violted. Under that pretense, I employed bootstrapping. *  
+
+```{r}
+df.lasso_model <- logistic_reg(mode = "classification", engine = "glmnet",
+                          penalty = tune(), # let's tune the lambda penalty term
+                          mixture = 1) #pure lasso regression
+
+lasso_wflow <- workflow() |>
+  add_model(df.lasso_model)
+```
+
+
+```{r lasso-tidy recipe}
+lasso_recipe <- recipe(
+  NACCALZD ~ CSFTTAU + CSFABETA + NACCAGE + BPDIAS + BPSYS + HXHYPER + HXSTROKE + NACCBMI + DEP2YRS
+  + SMOKYRS + HISPANIC + EDUC + SEX + ALCOHOL + HYPERCHO+ CVHATT + CVCHF
+  + DIABETES + NACCNIHR + B12DEF + MARISTAT + CVAFIB, #response ~ predictors
+  data = df
+) |>
+  step_normalize(all_numeric_predictors()) |> 
+  step_dummy(all_nominal_predictors())
+
+lasso_wflow <- lasso_wflow |>
+  add_recipe(lasso_recipe)
+```
+
+```{r}
+set.seed(1332)
+df_cv <- vfold_cv(df, v = 10)
+
+# auto.cv_grid <- expand.grid(penalty = ) dont think i need this...
+
+lasso_tune1 <- tune_grid(df.lasso_model, 
+                      lasso_recipe, 
+                      resamples = df_cv, 
+                      grid = grid_regular(penalty(range = c(-5, 3)), levels = 50))
+```
+
+```{r}
+lasso_tune1 |>
+  collect_metrics() |>
+  filter(.metric == "roc_auc") |>
+  ggplot(mapping = aes(x = penalty, y = mean)) + geom_point() + geom_line() + scale_x_log10()
+```
+
+
+
+```{r select best lasso}
+lasso_best <- lasso_tune1 |>
+  select_by_one_std_err(
+    metric = "roc_auc",
+    desc(penalty) # order penalty from largest (highest bias = simplest model) to smallest
+)
+lasso_best
+
+lasso_wflow_final <- lasso_wflow |>
+  finalize_workflow(parameters = lasso_best) 
+```
+
+
+
+```{r fit lasso-tidy model}
+lasso_fit <- lasso_wflow_final |>
+  fit(data = df)
+lasso_fit
+```
+
+```{r get coefficient estimates lasso}
+lasso_coef <- lasso_fit |>
+  broom::tidy()
+lasso_coef
+```
+
+```{r}
+# Check the first few rows and column names of df to confirm structure
+print(names(df))
+print(head(df))
+```
+
+
+
+
+```{r}
+library(tidymodels)
+library(dplyr)
+library(purrr)
+library(broom)
+library(glmnet)
+
+time_result <- system.time({
+
+# Set up LASSO model and workflow
+df.lasso_model <- logistic_reg(mode = "classification", engine = "glmnet",
+                          penalty = tune(), mixture = 1) # Pure LASSO
+
+lasso_recipe <- recipe(
+  NACCALZD ~ CSFTTAU + CSFABETA + NACCAGE + BPDIAS + BPSYS + HXHYPER + HXSTROKE + NACCBMI + DEP2YRS
+  + SMOKYRS + HISPANIC + EDUC + SEX + ALCOHOL + HYPERCHO + CVHATT + CVCHF
+  + DIABETES + NACCNIHR + B12DEF + MARISTAT + CVAFIB,
+  data = df
+) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors())
+
+lasso_wflow <- workflow() %>%
+  add_model(df.lasso_model) %>%
+  add_recipe(lasso_recipe)
+
+# Create 1000 bootstrap samples
+set.seed(1332)
+boot_samples <- bootstraps(df, times = 1000)
+
+# Define the lambda grid for tuning (adjust if necessary)
+lambda_grid <- grid_regular(penalty(range = c(-5, 3)), levels = 50)
+
+# Function to fit and tune model on each sample
+fit_model <- function(boot) {
+  # Fit the model on the resampled data
+  lasso_tuned <- tune_grid(
+    lasso_wflow,
+    resamples = bootstraps(analysis(boot), times = 1), # Single resample
+    grid = lambda_grid
+  ) %>%
+    select_best(metric = "roc_auc")
+
+  # Fit the final model using the selected best lambda
+  final_fit <- finalize_workflow(
+    lasso_wflow,
+    parameters = lasso_tuned
+  ) %>%
+    fit(data = analysis(boot))
+  
+  # Extract coefficients using the best lambda
+  tidy(final_fit, effects = "fixed", parameters = lasso_tuned)
+}
+
+# Apply the function to each bootstrap sample
+boot_results <- map_df(boot_samples$splits, fit_model, .id = "bootstrap_id")
+})
+print(time_result)
+```
+*check shape of bootstrap distribution of coefficients to determine the best confidence interval to use*
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Assuming boot_results has the structure with 'term' and 'estimate' columns
+
+# Identify the first six unique terms/variables in the data frame
+first_six_terms <- unique(boot_results$term)[16:20]
+
+# Filter the data for only the first six variables and plot the histograms
+boot_results %>%
+  filter(term %in% first_six_terms) %>%
+  ggplot(aes(x = estimate)) +
+  geom_histogram(bins = 30, fill = "blue", color = "black") +
+  facet_wrap(~ term, scales = "free_x") + # Creates a separate histogram for each variable
+  labs(title = "Histograms of Bootstrapped Coefficients for the First Six Variables",
+       x = "Coefficient Estimate",
+       y = "Frequency") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  # Enhances readability of x-axis labels
+        strip.text.x = element_text(size = 10))  # Adjust size for readability of facet labels
+
+```
+#Becasue some of these show some skewness, we will use normal theory confidence intervals
+
+```{r}
+# Calculate the mean, standard error, and normal theory confidence intervals of the coefficients
+coef_summary <- boot_results %>%
+  group_by(term) %>%
+  summarise(
+    mean = mean(estimate),
+    std_error = sd(estimate), # Calculate the standard error
+    lower_ci = mean - qt(0.975, df = n() - 1) * std_error, # Calculate the lower bound of the CI
+    upper_ci = mean + qt(0.975, df = n() - 1) * std_error  # Calculate the upper bound of the CI
+  )
+coef_summary
+```
+
+#Build a neural network using the varables that have the most predictive power
+
+```{r, include = FALSE}
+library(h2o)
+```
+
+
+```{r}
+# Initialize the H2O cluster
+h2o.init()
+
+
+df_h2o <- as.h2o(df)
+splits <- h2o.splitFrame(df_h2o, ratios = 0.8, seed = 42)
+train <- splits[[1]]
+test <- splits[[2]]
+
+
+# Further split the training set for a deeper validation approach
+splits1 <- h2o.splitFrame(train, ratios = 0.8, seed = 42)
+train1 <- splits1[[1]]
+test1 <- splits1[[2]]
+
+# Define a unique grid ID using the current timestamp
+grid_id <- paste("dl_grid", format(Sys.time(), "%Y%m%d%H%M%S"), sep = "_")
+
+# Define your hyperparameters for grid search
+hyper_params <- list(
+  hidden = list(c(50, 25), c(100, 50), c(150, 100, 50), c(200, 150, 100, 50)),
+  rate = c(0.01, 0.005, 0.001, 0.0005),
+  l1 = c(0, 1e-5, 1e-4, 1e-3),
+  l2 = c(0, 1e-5, 1e-4, 1e-3),
+  hidden_dropout_ratios = list(c(0.1, 0.1), c(0.2, 0.1), c(0.3, 0.2, 0.1), c(0.4, 0.3, 0.2, 0.1))
+)
+
+# Set up search criteria for a more extensive grid search
+search_criteria <- list(strategy = "RandomDiscrete", max_models = 10, seed = 123)
+
+# Execute the grid search with the unique grid ID
+grid <- h2o.grid(
+  algorithm = "deeplearning",
+  grid_id = grid_id,
+  x = c("CSFTTAU", "CSFABETA", "DEP2YRS", "EDUC", "NACCAGE", "SEX"),
+  y = "NACCALZD",
+  training_frame = train1,
+  validation_frame = test1,
+  hyper_params = hyper_params,
+  search_criteria = search_criteria,
+  epochs = 200,
+  activation = "RectifierWithDropout",
+  adaptive_rate = FALSE,
+  rate_annealing = 1e-6,
+  rate_decay = 0.99,
+  momentum_start = 0.5,
+  momentum_stable = 0.99,
+  seed = 1234
+)
+
+# Retrieve model IDs from the grid
+model_ids <- grid@model_ids
+
+# Evaluate all models and select the one with the highest accuracy
+accuracy_scores <- sapply(model_ids, function(id) {
+  # Convert id to character if it's not already
+  id <- as.character(id)
+  model <- h2o.getModel(id[1])  # Access the first element to ensure it's a single character string
+  perf <- h2o.performance(model, newdata = test1)
+  
+  # Retrieve the table of thresholds and corresponding performance metrics
+  metrics <- h2o.performance(model, newdata = test1)@metrics$max_criteria_and_metric_scores
+  
+  # Find the threshold that maximizes the F1 score
+  max_f1_threshold <- as.numeric(metrics[which.max(metrics[["f1"]]), "threshold"])
+  
+  # Calculate accuracy at this threshold
+  return(h2o.accuracy(perf, threshold = max_f1_threshold))
+})
+best_model_id <- model_ids[which.max(accuracy_scores)]
+# Ensure best_model_id is treated as a single character string
+best_model_id <- as.character(best_model_id)
+best_model <- h2o.getModel(best_model_id[1])  # Access the first element if needed
+predictions <- h2o.predict(best_model, test1)
+performance <- h2o.performance(best_model, newdata = test1)
+
+# Repeat the threshold finding and accuracy calculation for the best model to ensure consistency
+best_metrics <- h2o.performance(best_model, newdata = test1)@metrics$max_criteria_and_metric_scores
+best_f1_threshold <- as.numeric(best_metrics[which.max(best_metrics[["f1"]]), "threshold"])
+accuracy <- h2o.accuracy(performance, threshold = best_f1_threshold)  # Use the best F1 threshold for 
+#accuracy
+
+print(sprintf("Best Model Accuracy: %f", accuracy))
+
+```
+
