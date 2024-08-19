@@ -7,8 +7,8 @@ In this project we analyze a vast National Institute of Health dataset collected
 Methods
 
 We use a combination of inferential and predictive tools in order to effectively address the two goals of our study.  First, we employ bootstrap LASSO regression confidence intervals on the binary response variable “diagnosis”, whose outcome consists of two labels, referring to either a diagnosis of at least a mild cognitive progression of the disease, or the negative assessment of the disease among the subjects. The LASSO model allows us to perform variable selection and handle potential multicollinearity among predictors. We complement this by then utilizing a Random Forest model to further assess the importance of these variables.
-Finally, to build a predictive model for Alzheimer’s diagnosis, we further deploy Random Forests, while also implementing a one-layer Neural Network.
+Finally, to build a predictive model for Alzheimer’s diagnosis, we implement a one-layer Neural Network.
 
 Results
 
-The LASSO model found that there are a host of variables that impact AD diagnosis. These variables include T-Tau,  A𝛽1-42,  age, systolic blood pressure, years of education, depression,  sex, and marital status.  Our neural network and random forests model returned promising accuracies of  83% and 81%, respectively.
+The LASSO model found that there are a host of variables that impact AD diagnosis. These variables include T-Tau,  A𝛽1-42,  age, systolic blood pressure, years of education, depression,  sex, and marital status.  Our neural network model returned a promising accuracy of 81%.
