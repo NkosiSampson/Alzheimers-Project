@@ -51,16 +51,4 @@ This project explores the relationship between Alzheimer's disease biomarkers an
 3. **Performance**: Neural network models demonstrated strong classification performance, optimizing F1-score thresholds.
 
 ---
-
-## Repository Structure
-- **`data/`**: Contains raw and processed datasets.
-- **`scripts/`**: Includes all R scripts for data preparation, modeling, and visualization.
-- **`results/`**: Stores output files such as partial residual plots and model summaries.
-- **`models/`**: Saved machine learning models, including the best LASSO and neural network models.
-
----
-
-## How to Run
-1. Clone the repository:
-   ```bash
    git clone <repository_url>
