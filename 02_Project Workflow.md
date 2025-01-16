@@ -51,4 +51,4 @@ This project explores the relationship between Alzheimer's disease biomarkers an
 3. **Performance**: Neural network models demonstrated strong classification performance, optimizing F1-score thresholds.
 
 ---
-   git clone <repository_url>
+
