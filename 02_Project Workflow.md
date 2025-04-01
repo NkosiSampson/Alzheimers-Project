@@ -41,7 +41,7 @@ This project explores the relationship between Alzheimer's disease biomarkers an
 - Evaluated models on a validation set:
   - Selected the best-performing model based on accuracy and F1-score.
   - Threshold optimized for best classification accuracy.
-- Achieved a final accuracy of **82%** (replace with actual metric).
+- Achieved a final accuracy of **82%**.
 
 ---
 
